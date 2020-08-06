@@ -1,2 +1,10 @@
+# SCALA
 *.class
 *.log
+*.xml	
+
+# OTHER
+.DS_Store
+.idea
+project
+target
