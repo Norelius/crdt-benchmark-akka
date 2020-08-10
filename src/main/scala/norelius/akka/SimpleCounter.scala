@@ -42,21 +42,27 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command], state: GrowOnl
   override def onMessage(msg: Command): Behavior[Command] = {
     msg match {
       case Increment(mid) =>
+        // Currently the state is sent out after each update. Here is where we
+        // could check how long it's been since we last sent out the state,
+        // and only send it if the time limit has been reached. Additionally
+        // we could send intermittent pings to make sure state is sent even
+        // if no further updates are performed.
         state.update(1)
         for (rep <- replicas) {
           if (rand.nextDouble() <= gossipRatio) {
             rep ! SendState(mid, write[GrowOnlyCounter](state))
           }
         }
-        context.log.info("Replica {} performed inc-{}", state.replica, mid)
+        context.log.info("{} performed inc-{}", context.self.path.name, mid)
         this
-      case SendState(mid, payload) =>
+      case SendState(_, payload) =>
         state.merge(read[GrowOnlyCounter](payload))
-        context.log.info("Replica {} performed merge-{}", state.replica, mid)
+        // Very chatty logs if enables but allows retracing of all messages.
+        // context.log.info("{} performed merge-{}", context.self.path.name, mid)
         this
       case ReadValue(mid, replyTo) =>
         replyTo ! RespondValue(mid, state.value)
-        context.log.info("Replica {} performed valueread-{} with with value={}", state.replica, mid, state.value)
+        context.log.info("{} performed valueread-{} with with value={}", context.self.path.name, mid, state.value)
         this
       case SetReplicas(_, rep) =>
         replicas  = rep - context.self
@@ -64,6 +70,7 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command], state: GrowOnl
       case RequestReplicas(mid, replyTo) =>
         replyTo ! RespondReplicas(mid, replicas)
         this
+      case _ => this // Ignore all other messages.
     }
   }
 }
