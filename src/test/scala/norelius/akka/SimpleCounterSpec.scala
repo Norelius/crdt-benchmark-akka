@@ -1,42 +1,50 @@
 package norelius.akka
 
 import akka.actor.testkit.typed.scaladsl.ScalaTestWithActorTestKit
-import norelius.akka.MessageGenerator.SendMessages
 import norelius.akka.SimpleCounter._
-import norelius.crdt.GrowOnlyCounter
 import org.scalatest.wordspec.AnyWordSpecLike
-import upickle.default.write
+
 import scala.concurrent.duration._
 
 class SimpleCounterSpec extends ScalaTestWithActorTestKit with AnyWordSpecLike {
 
   "A OGCounter" must {
     "remove it's own reference when setting replicas" in {
-      val underTest = spawn(SimpleCounter(0, 2, 1))
-      val otherReplica = spawn(SimpleCounter(1, 2, 1))
-      underTest ! SetReplicas(0, Set(underTest, otherReplica))
+      val managerProbe = createTestProbe[ReplicaManager.ReplicaFinished]
+      val underTest = spawn(SimpleCounter(managerProbe.ref, 0, 2, Config(
+        sendBehavior = One(),
+        sendFrequency = 10.seconds,
+        finiteQueries = false)))
+      val otherReplica = spawn(SimpleCounter(managerProbe.ref, 0, 2, Config(
+        sendBehavior = One(),
+        sendFrequency = 10.seconds,
+        finiteQueries = false)))
+      underTest ! SetReplicas(mid = 0, Set(underTest, otherReplica))
       val replyProbe = createTestProbe[SimpleCounter.RespondReplicas]()
       underTest ! RequestReplicas(4, replyProbe.ref)
       replyProbe.expectMessage(RespondReplicas(4, Set(otherReplica)))
     }
 
-    "send it's state to other replicas according to the ratio" in {
-      // Send to all replicas
-      val underTest = spawn(SimpleCounter(0, 3, 1.0))
-      val replyProbe1 = createTestProbe[SimpleCounter.Command]()
-      val replyProbe2 = createTestProbe[SimpleCounter.Command]()
-      underTest ! SetReplicas(0, Set(underTest, replyProbe1.ref, replyProbe2.ref))
-      underTest ! Increment(4)
-      val state = write[GrowOnlyCounter](new GrowOnlyCounter(0, Array(1, 0, 0)))
-      replyProbe1.expectMessage(SendState(4, state))
-      replyProbe2.expectMessage(SendState(4, state))
-
-      // Send to no replicas
-      val underTestNoGossip = spawn(SimpleCounter(0, 3, -1))
-      underTestNoGossip ! SetReplicas(0, Set(underTestNoGossip, replyProbe1.ref, replyProbe2.ref))
-      underTestNoGossip ! Increment(4)
-      replyProbe1.expectNoMessage(3.seconds)
-      replyProbe2.expectNoMessage(3.seconds)
+    "shut down according to config" in {
+      val managerProbe1 = createTestProbe[ReplicaManager.ReplicaFinished]
+      val managerProbe2 = createTestProbe[ReplicaManager.ReplicaFinished]
+      val underTest1 = spawn(SimpleCounter(managerProbe1.ref, 0, 2, Config(
+        sendBehavior = All(),
+        sendFrequency = 10.seconds,
+        finiteQueries = false)))
+      val underTest2 = spawn(SimpleCounter(managerProbe2.ref, 0, 2, Config(
+        sendBehavior = All(),
+        sendFrequency = 10.seconds,
+        finiteQueries = true,
+        maxQueries = 2
+      )))
+      underTest1 ! SetReplicas(mid = 0, Set(underTest1, underTest2))
+      underTest2 ! SetReplicas(mid = 0, Set(underTest1, underTest2))
+      for (n <- 0 to 20) underTest1 ! Increment(n)
+      managerProbe1.expectNoMessage(3.seconds)
+      underTest2 ! Increment(0)
+      underTest2 ! Increment(1)
+      managerProbe2.expectMessage(ReplicaManager.ReplicaFinished(underTest2))
     }
   }
 
