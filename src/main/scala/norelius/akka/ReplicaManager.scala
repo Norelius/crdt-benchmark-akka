@@ -1,8 +1,11 @@
 package norelius.akka
 
-import akka.actor.typed.{ActorRef, Behavior}
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors}
+import akka.actor.typed.{ActorRef, Behavior, PostStop, Signal}
 import norelius.akka.MessageGenerator.SendMessages
+import norelius.akka.SimpleCounter.SendBehavior
+
+import scala.concurrent.duration.{Duration, FiniteDuration}
 
 object ReplicaManager {
   def apply(): Behavior[Command] =
@@ -10,7 +13,7 @@ object ReplicaManager {
 
   sealed trait Command
   // TODO: Set what type of merging should be done.
-  final case class Setup(numberOfReplicas: Int, gossipRatio: Double) extends Command
+  final case class Setup(numberOfReplicas: Int, sendBehavior: SendBehavior, sendFrequency: FiniteDuration) extends Command
   final case class Start(numberOfMessages: Int) extends Command
 }
 
@@ -22,9 +25,10 @@ class ReplicaManager(context: ActorContext[ReplicaManager.Command])
 
   override def onMessage(msg: ReplicaManager.Command): Behavior[ReplicaManager.Command] =
     msg match {
-      case Setup(numberOfReplicas, gossipRatio) =>
+      case Setup(numberOfReplicas, sendBehavior: SendBehavior, sendFrequency: Duration) =>
         for( n <- 0 to numberOfReplicas -1) {
-          replicas += context.spawn(SimpleCounter(n, numberOfReplicas, gossipRatio), "Replica-" + n)
+          replicas += context.spawn(
+            SimpleCounter(n, numberOfReplicas, sendBehavior, sendFrequency), "Replica-" + n)
         }
         val m = SimpleCounter.SetReplicas(1, replicas.toSet)
         replicas.foreach(r => r ! m)
@@ -35,4 +39,10 @@ class ReplicaManager(context: ActorContext[ReplicaManager.Command])
         generator ! SendMessages(numberOfMessages)
         this
     }
+
+  override def onSignal: PartialFunction[Signal, Behavior[ReplicaManager.Command]] = {
+    case PostStop =>
+      context.log.info("ReplicaManager actor stopped", context.self.path.name)
+      this
+  }
 }
