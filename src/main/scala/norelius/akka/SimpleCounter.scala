@@ -3,8 +3,7 @@ package norelius.akka
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{ActorRef, Behavior, PostStop, Signal}
 import norelius.akka.SimpleCounter.Config
-import norelius.crdt.GrowOnlyCounter
-import upickle.default._
+import norelius.crdt.{Counter, GrowOnlyCounter}
 
 import scala.concurrent.duration.FiniteDuration
 import scala.util.Random
@@ -13,11 +12,12 @@ object SimpleCounter {
   def apply(manager: ActorRef[ReplicaManager.ReplicaFinished],
             replicaId: Int,
             size: Int,
+            constructor: GrowOnlyCounter => Counter,
             config: Config): Behavior[Command] =
     Behaviors.setup(context =>
       Behaviors.withTimers(timers =>
         new SimpleCounter(context, timers, manager, config,
-          new GrowOnlyCounter(replicaId, new Array[Int](size)))))
+          constructor(new GrowOnlyCounter(replicaId, new Array[Int](size))))))
 
   class SendBehavior()
 
@@ -58,13 +58,11 @@ object SimpleCounter {
 
 }
 
-class SimpleCounter(
-                     context: ActorContext[SimpleCounter.Command],
-                     timers: TimerScheduler[SimpleCounter.Command],
-                     manager: ActorRef[ReplicaManager.ReplicaFinished],
-                     config: Config,
-                     state: GrowOnlyCounter)
-  extends AbstractBehavior[SimpleCounter.Command](context) {
+class SimpleCounter(context: ActorContext[SimpleCounter.Command],
+                    timers: TimerScheduler[SimpleCounter.Command],
+                    manager: ActorRef[ReplicaManager.ReplicaFinished],
+                    config: Config,
+                    state: Counter) extends AbstractBehavior[SimpleCounter.Command](context) {
 
   import SimpleCounter._
 
@@ -83,10 +81,11 @@ class SimpleCounter(
       case Increment(mid) =>
         sendIfTime
         queriesReceived += 1
-        state.update(1)
+        state.increment()
         // context.log.info("{} performed inc-{}", context.self.path.name, mid)
         // Check if a max number of queries is set and stop behavior if limit is reached.
         if (config.finiteQueries && queriesReceived >= config.maxQueries) {
+          context.log.info("Finish time: {}", System.currentTimeMillis())
           context.log.info("{} reached max number of queries {} with last query [inc-{}]",
             context.self.path.name, queriesReceived, mid)
           manager ! ReplicaManager.ReplicaFinished(context.self)
@@ -94,13 +93,13 @@ class SimpleCounter(
         this
       case State(_, payload) =>
         sendIfTime
-        state.merge(read[GrowOnlyCounter](payload))
+        state.merge(payload)
         // Very chatty logs if enables but allows retracing of all messages.
         // context.log.info("{} performed merge-{}", context.self.path.name, mid)
         this
       case ReadValue(mid, replyTo) =>
         sendIfTime
-        replyTo ! RespondValue(mid, state.value)
+        replyTo ! RespondValue(mid, state.value())
         // context.log.info("{} performed valueread-{} with value={}", context.self.path.name, mid, state.value)
         this
       case SetReplicas(_, rep) =>
@@ -131,16 +130,16 @@ class SimpleCounter(
     // context.log.info("{} performed send-{}", context.self.path.name, stateMessageID)
     config.sendBehavior match {
       case One() =>
-        replicas(rand.nextInt(replicas.length)) ! State(stateMessageID, write[GrowOnlyCounter](state))
+        replicas(rand.nextInt(replicas.length)) ! State(stateMessageID, state.serialize())
       case Ratio(ratio) =>
-        val stateMessage = State(stateMessageID, write[GrowOnlyCounter](state))
+        val stateMessage = State(stateMessageID, state.serialize())
         for (rep <- replicas) {
           if (rand.nextDouble() <= ratio) {
             rep ! stateMessage
           }
         }
       case All() =>
-        val stateMessage = State(stateMessageID, write[GrowOnlyCounter](state))
+        val stateMessage = State(stateMessageID, state.serialize())
         replicas.foreach(r => r ! stateMessage)
     }
   }
