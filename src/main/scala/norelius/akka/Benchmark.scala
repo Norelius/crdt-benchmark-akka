@@ -4,6 +4,7 @@ import akka.actor.typed.ActorSystem
 import norelius.akka.ReplicaManager.{Setup, Start}
 import norelius.akka.SimpleCounter._
 
+import scala.concurrent.Await
 import scala.concurrent.duration.DurationInt
 
 object Benchmark extends App {
@@ -31,7 +32,6 @@ object Benchmark extends App {
   // TODO: add config file for tests
 
   for (i <- 1 to runs) {
-    Thread.sleep(2000) // Make sure all actors have stopped.
     val replicaManager: ActorSystem[ReplicaManager.Command] = ActorSystem(ReplicaManager(), "ReplicaManager")
     // Log the run info so logs are easier to tell apart.
     replicaManager.log.info("Experiment: {}, Runs: {}, Replicas: {}, Clients: {}, Sendbehavior: {}, Sendfrequency: {}," +
@@ -46,5 +46,8 @@ object Benchmark extends App {
       clientsPerReplica)
     Thread.sleep(50) // Make sure all replicas and client are up and running.
     replicaManager ! Start(numberOfUpdates)
+    val future = replicaManager.whenTerminated
+    Await.result(future, 30.seconds)
+    print{"."}
   }
 }
