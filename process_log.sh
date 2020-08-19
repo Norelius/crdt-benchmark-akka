@@ -28,18 +28,16 @@ process(){
 main(){
 	local FILE=$1
 
+	if [[ ! -f "$FILE" ]]; then
+		echo "Can't find file: ${FILE}"
+		exit
+	fi
+
 	local REPLICAS=$(eval sed -n '2p' "${FILE}" | tr ',' '\n' | sed -n '4p' | tr -dc [:digit:])
 
 	local CLIENTS=$(eval sed -n '2p' "${FILE}" | tr ',' '\n' | sed -n '5p' | tr -dc [:digit:])
 
 	local RUNS=$(eval sed -n '2p' "${FILE}" | tr ',' '\n' | sed -n '3p' | tr -dc [:digit:])
-
-	
-
-	if [[ ! -f "$FILE" ]]; then
-		echo "Can't find file: ${FILE}"
-		exit
-	fi
 
 	process "${FILE}" "${REPLICAS}" "${CLIENTS}" "${RUNS}"
 }
