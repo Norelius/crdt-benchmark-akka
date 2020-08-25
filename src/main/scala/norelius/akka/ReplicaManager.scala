@@ -27,7 +27,7 @@ object ReplicaManager {
                          config: Config,
                          clientsPerReplica: Int) extends Command
 
-  final case class Start(numberOfMessages: Int) extends Command
+  final case class Start(numberOfMessages: Int, readRatio: Double) extends Command
 
   final case class ReplicaFinished(replica: ActorRef[SimpleCounter.Command]) extends Command
 
@@ -52,7 +52,8 @@ class ReplicaManager(context: ActorContext[ReplicaManager.Command])
               counterConstructor, config), "Replica-" + n)
           replicas += replica
           for (m <- 0 to clientsPerReplica - 1) {
-            clients += context.spawn(Client(replica), "Client-%d-%d".format(n, m))
+            val receiver = context.spawn(Receiver(), "Receiver-%d-%d".format(n, m))
+            clients += context.spawn(Client(replica, receiver), "Client-%d-%d".format(n, m))
           }
         }
         val m = SimpleCounter.SetReplicas(1, replicas.toSet)
@@ -60,8 +61,8 @@ class ReplicaManager(context: ActorContext[ReplicaManager.Command])
         context.log.info("Finished setting up {} replicas and {} clients",
           numberOfReplicas, numberOfReplicas * clientsPerReplica)
         this
-      case Start(numberOfMessages) =>
-        clients.foreach(c => c ! SendUpdates(numberOfMessages))
+      case Start(numberOfMessages, readRatio) =>
+        clients.foreach(c => c ! SendUpdates(numberOfMessages, readRatio))
         this
       case ReplicaFinished(ref) =>
         terminatedReplicas += ref

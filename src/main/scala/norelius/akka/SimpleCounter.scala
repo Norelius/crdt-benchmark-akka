@@ -2,6 +2,7 @@ package norelius.akka
 
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{ActorRef, Behavior, PostStop, Signal}
+import norelius.akka.Receiver.RespondValue
 import norelius.akka.SimpleCounter.Config
 import norelius.crdt.{Counter, GrowOnlyCounter}
 
@@ -43,7 +44,7 @@ object SimpleCounter {
   // The value function
   final case class ReadValue(mid: Int, replyTo: ActorRef[RespondValue]) extends Command
 
-  final case class RespondValue(mid: Int, value: Int) extends Command
+  //  final case class RespondValue(mid: Int, value: Int) extends Command
 
   // Periodic message sent according to the send frequency. Checks if state should be sent out.
   final case class Ping() extends Command
@@ -80,16 +81,9 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
     msg match {
       case Increment(mid) =>
         sendIfTime
-        queriesReceived += 1
         state.increment()
         // context.log.info("{} performed inc-{}", context.self.path.name, mid)
-        // Check if a max number of queries is set and stop behavior if limit is reached.
-        if (config.finiteQueries && queriesReceived >= config.maxQueries) {
-          context.log.info("Finish time: {}", System.currentTimeMillis())
-          context.log.info("{} reached max number of queries {} with last query [inc-{}]",
-            context.self.path.name, queriesReceived, mid)
-          manager ! ReplicaManager.ReplicaFinished(context.self)
-        }
+        incrementQueriesAndCheckIfFinished
         this
       case State(_, payload) =>
         sendIfTime
@@ -101,6 +95,7 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
         sendIfTime
         replyTo ! RespondValue(mid, state.value())
         // context.log.info("{} performed valueread-{} with value={}", context.self.path.name, mid, state.value)
+        incrementQueriesAndCheckIfFinished
         this
       case SetReplicas(_, rep) =>
         replicas = (rep - context.self).toArray
@@ -141,6 +136,17 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
       case All() =>
         val stateMessage = State(stateMessageID, state.serialize())
         replicas.foreach(r => r ! stateMessage)
+    }
+  }
+
+  // Check if a max number of queries is set and report to manager if limit is reached.
+  def incrementQueriesAndCheckIfFinished(): Unit = {
+    queriesReceived += 1
+    if (config.finiteQueries && queriesReceived >= config.maxQueries) {
+      context.log.info("Finish time: {}", System.currentTimeMillis())
+      context.log.info("{} reached max number of queries {}",
+        context.self.path.name, queriesReceived)
+      manager ! ReplicaManager.ReplicaFinished(context.self)
     }
   }
 

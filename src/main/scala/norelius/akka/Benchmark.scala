@@ -27,6 +27,8 @@ object Benchmark extends App {
   // The number of update messages per client per replica that should be sent.
   var numberOfQueriesPerClient = 0
   setQueries(totalQueries)
+  // The ratio of reads vs update queries.
+  var readRatio: Double = 0.0
   // The number of times the experiment should be run.
   var runs = 1
 
@@ -41,8 +43,8 @@ object Benchmark extends App {
     val replicaManager: ActorSystem[ReplicaManager.Command] = ActorSystem(ReplicaManager(), "ReplicaManager")
     // Log the run info so logs are easier to tell apart.
     replicaManager.log.info("Experiment: {}, Runs: {}, Replicas: {}, Clients: {}, Sendbehavior: {}, Sendfrequency: {}," +
-      " totalQueries: {}, storedSerialized: {}, osdMerge: {}, serializer: {}", i, runs, numberOfReplicas,
-      clientsPerReplica * numberOfReplicas, sendBehavior, sendFrequency, totalQueries, storedSerialized,
+      " totalQueries: {}, readRatio: {}, storedSerialized: {}, osdMerge: {}, serializer: {}", i, runs, numberOfReplicas,
+      clientsPerReplica * numberOfReplicas, sendBehavior, sendFrequency, totalQueries, readRatio, storedSerialized,
       osdMerge, serializer)
     replicaManager ! Setup(numberOfReplicas,
       storedSerialized,
@@ -51,7 +53,7 @@ object Benchmark extends App {
       Config(sendBehavior, sendFrequency, finiteQueries, maxQueries),
       clientsPerReplica)
     Thread.sleep(50) // Make sure all replicas and client are up and running.
-    replicaManager ! Start(numberOfQueriesPerClient)
+    replicaManager ! Start(numberOfQueriesPerClient, readRatio)
     val future = replicaManager.whenTerminated
     Await.result(future, 30.seconds)
     print {
@@ -62,7 +64,8 @@ object Benchmark extends App {
   private def parseArgs(): Unit = {
     val usage =
       """
-    Usage: benchmark [-replicas num] [-messages num] [-runs num] [-clients-per-replica num]
+    Usage: benchmark [-replicas num] [-clients-per-replica num] [-runs num]
+                     [-messages num] [-read-ratio double]
                      [-gossip one/all/double] [-gossip-frequency ms]
                      [-stored-deserialized] [-osd-merge] [-serializer pickle/java]
   """
@@ -76,12 +79,14 @@ object Benchmark extends App {
         case Nil => map
         case "-replicas" :: str :: tail =>
           nextOption(map ++ Map(Symbol("replicas") -> str.toInt), tail)
-        case "-messages" :: str :: tail =>
-          nextOption(map ++ Map(Symbol("maxQueries") -> str.toInt), tail)
         case "-runs" :: str :: tail =>
           nextOption(map ++ Map(Symbol("runs") -> str.toInt), tail)
         case "-clients-per-replica" :: str :: tail =>
           nextOption(map ++ Map(Symbol("clientsPerReplica") -> str.toInt), tail)
+        case "-messages" :: str :: tail =>
+          nextOption(map ++ Map(Symbol("maxQueries") -> str.toInt), tail)
+        case "-read-ratio" :: str :: tail =>
+          nextOption(map ++ Map(Symbol("readRatio") -> str.toDouble), tail)
         case "-gossip" :: str :: tail =>
           val b: SendBehavior = str match {
             case "one" => One()
@@ -119,6 +124,10 @@ object Benchmark extends App {
     if (options.contains(Symbol("maxQueries"))) {
       setQueries(options(Symbol("maxQueries")).asInstanceOf[Int])
     }
+    if (options.contains(Symbol {
+      "readRatio"
+    }))
+      readRatio = options(Symbol("readRatio")).asInstanceOf[Double]
     if (options.contains(Symbol("runs")))
       runs = options(Symbol("runs")).asInstanceOf[Int]
     if (options.contains(Symbol("storedDeserialized")))
