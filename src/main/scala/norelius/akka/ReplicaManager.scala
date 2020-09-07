@@ -52,8 +52,7 @@ class ReplicaManager(context: ActorContext[ReplicaManager.Command])
               counterConstructor, config), "Replica-" + n)
           replicas += replica
           for (m <- 0 to clientsPerReplica - 1) {
-            val receiver = context.spawn(Receiver(), "Receiver-%d-%d".format(n, m))
-            clients += context.spawn(Client(replica, receiver), "Client-%d-%d".format(n, m))
+            clients += context.spawn(Client(replica), "Client-%d-%d".format(n, m))
           }
         }
         val m = SimpleCounter.SetReplicas(1, replicas.toSet)

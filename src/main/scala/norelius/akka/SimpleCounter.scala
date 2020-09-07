@@ -2,7 +2,7 @@ package norelius.akka
 
 import akka.actor.typed.scaladsl.{AbstractBehavior, ActorContext, Behaviors, TimerScheduler}
 import akka.actor.typed.{ActorRef, Behavior, PostStop, Signal}
-import norelius.akka.Receiver.RespondValue
+import norelius.akka.Client.{Acknowledge, RespondValue}
 import norelius.akka.SimpleCounter.Config
 import norelius.crdt.{Counter, GrowOnlyCounter}
 
@@ -36,7 +36,7 @@ object SimpleCounter {
   sealed trait Command
 
   // Update/Increment local counter
-  final case class Increment(mid: Int) extends Command
+  final case class Increment(mid: Int, replyTo: ActorRef[Acknowledge]) extends Command
 
   // Merge: A serialized version of a state to be shared between replicas
   final case class State(mid: Int, payload: String) extends Command
@@ -72,6 +72,7 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
   var stateMessageID = 0
   var lastStateSent: Long = 0
   var queriesReceived: Long = 0
+  var mergesReceived: Long = 0
   // Log Startup
   context.log.info("{} started", context.self.path.name)
 
@@ -79,23 +80,25 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
     // Sending state takes priority over some messages, in those cases we check if it's time to send the state.
     // The timed pings make sure we always send out updates on time.
     msg match {
-      case Increment(mid) =>
-        sendIfTime
+      case Increment(mid, replyTo) =>
         state.increment()
+        replyTo ! Acknowledge(mid)
         // context.log.info("{} performed inc-{}", context.self.path.name, mid)
         incrementQueriesAndCheckIfFinished
+        sendIfTime
         this
       case State(_, payload) =>
-        sendIfTime
         state.merge(payload)
+        mergesReceived += 1
         // Very chatty logs if enables but allows retracing of all messages.
         // context.log.info("{} performed merge-{}", context.self.path.name, mid)
+        sendIfTime
         this
       case ReadValue(mid, replyTo) =>
-        sendIfTime
         replyTo ! RespondValue(mid, state.value())
         // context.log.info("{} performed valueread-{} with value={}", context.self.path.name, mid, state.value)
         incrementQueriesAndCheckIfFinished
+        sendIfTime
         this
       case SetReplicas(_, rep) =>
         replicas = (rep - context.self).toArray
@@ -144,8 +147,8 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
     queriesReceived += 1
     if (config.finiteQueries && queriesReceived >= config.maxQueries) {
       context.log.info("Finish time: {}", System.currentTimeMillis())
-      context.log.info("{} reached max number of queries {}",
-        context.self.path.name, queriesReceived)
+      context.log.info("{} reached max number of queries {} and received {} merge requests",
+        context.self.path.name, queriesReceived, mergesReceived)
       manager ! ReplicaManager.ReplicaFinished(context.self)
     }
   }

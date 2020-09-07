@@ -5,8 +5,8 @@ import norelius.akka.ReplicaManager.{Setup, Start}
 import norelius.akka.Serializer.Serializer
 import norelius.akka.SimpleCounter.{SendBehavior, _}
 
-import scala.concurrent.Await
 import scala.concurrent.duration.{DurationInt, FiniteDuration}
+import scala.concurrent.{Await, TimeoutException}
 
 object Benchmark extends App {
   // The number of replicas in the network.
@@ -55,7 +55,13 @@ object Benchmark extends App {
     Thread.sleep(50) // Make sure all replicas and client are up and running.
     replicaManager ! Start(numberOfQueriesPerClient, readRatio)
     val future = replicaManager.whenTerminated
-    Await.result(future, 30.seconds)
+    try {
+      Await.result(future, 30.seconds)
+    } catch {
+      case e: TimeoutException =>
+        replicaManager.terminate()
+        println("TIMEOUT")
+    }
     print {
       "."
     }
