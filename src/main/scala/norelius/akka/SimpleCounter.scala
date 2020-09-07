@@ -159,5 +159,6 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
     if (now - lastStateSent > config.sendFrequency.toMillis) {
       sendState()
     }
+    lastStateSent = System.currentTimeMillis()
   }
 }
