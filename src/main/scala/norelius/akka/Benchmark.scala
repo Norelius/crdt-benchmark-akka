@@ -31,10 +31,11 @@ object Benchmark extends App {
   var readRatio: Double = 0.0
   // The number of times the experiment should be run.
   var runs = 1
+  var runAtMostDuration = 30.seconds // Duration.Inf for large tests
 
   var storedSerialized = true
   var osdMerge = false
-  var serializer = Serializer.Pickle
+  var serializer: Serializer = Serializer.Pickle
 
   parseArgs()
 
@@ -56,7 +57,7 @@ object Benchmark extends App {
     replicaManager ! Start(numberOfQueriesPerClient, readRatio)
     val future = replicaManager.whenTerminated
     try {
-      Await.result(future, 30.seconds)
+      Await.result(future, runAtMostDuration)
     } catch {
       case e: TimeoutException =>
         replicaManager.terminate()

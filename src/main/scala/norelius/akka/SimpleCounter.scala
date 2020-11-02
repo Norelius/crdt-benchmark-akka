@@ -68,7 +68,7 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
   import SimpleCounter._
 
   var replicas: Array[ActorRef[Command]] = Array[ActorRef[Command]]()
-  val rand = new Random(state.replica)
+  val rand = new Random(System.currentTimeMillis())
   var stateMessageID = 0
   var lastStateSent: Long = 0
   var queriesReceived: Long = 0
@@ -157,8 +157,8 @@ class SimpleCounter(context: ActorContext[SimpleCounter.Command],
   def sendIfTime = {
     val now = System.currentTimeMillis()
     if (now - lastStateSent > config.sendFrequency.toMillis) {
+      lastStateSent = System.currentTimeMillis()
       sendState()
     }
-    lastStateSent = System.currentTimeMillis()
   }
 }
